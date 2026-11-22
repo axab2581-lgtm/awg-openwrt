@@ -74,7 +74,7 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
-          EXPECTED='kernel-6.12.74~50c25113c07569854428230fbdfd4c63'
+          EXPECTED='kernel-6.12.74~50c25113c07569854428230fbdfd4c63-r1'
           mapfile -t PACKAGES < <(find bin -type f -name 'kmod-amneziawg*.apk' -print)
           if [ "${#PACKAGES[@]}" -ne 1 ]; then
             echo "Expected exactly one kmod-amneziawg APK; found ${#PACKAGES[@]}"
