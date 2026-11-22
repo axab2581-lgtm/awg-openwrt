@@ -37,11 +37,11 @@ jobs:
           grep -q 'DEVICE_MODEL := WR1300S' target/linux/ramips/image/mt7621.mk
           grep -q 'TARGET_DEVICES += cudy_wr1300s' target/linux/ramips/image/mt7621.mk
           test -f target/linux/ramips/dts/mt7621_cudy_wr1300s.dts
-          mkdir -p feeds/awg
-          cp -a "$GITHUB_WORKSPACE/kmod-amneziawg" feeds/awg/
-          cp -a "$GITHUB_WORKSPACE/amneziawg-tools" feeds/awg/
-          cp -a "$GITHUB_WORKSPACE/luci-proto-amneziawg" feeds/awg/
-          echo "src-link awg $PWD/feeds/awg" >> feeds.conf
+          mkdir -p "$GITHUB_WORKSPACE/awg-feed"
+          cp -a "$GITHUB_WORKSPACE/kmod-amneziawg" "$GITHUB_WORKSPACE/awg-feed/"
+          cp -a "$GITHUB_WORKSPACE/amneziawg-tools" "$GITHUB_WORKSPACE/awg-feed/"
+          cp -a "$GITHUB_WORKSPACE/luci-proto-amneziawg" "$GITHUB_WORKSPACE/awg-feed/"
+          echo "src-link awg $GITHUB_WORKSPACE/awg-feed" >> feeds.conf
           ./scripts/feeds update base
           ./scripts/feeds update luci
           ./scripts/feeds update awg
