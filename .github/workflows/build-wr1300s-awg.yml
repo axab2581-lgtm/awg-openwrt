@@ -69,7 +69,14 @@ jobs:
           set -o pipefail
           make -j2 tools/install V=s 2>&1 | tee "$GITHUB_WORKSPACE/diagnostics/tools-build.log"
 
-      - name: Build kernel and AmneziaWG module
+      - name: Prepare and build the exact target kernel
+        working-directory: openwrt
+        shell: bash
+        run: |
+          set -o pipefail
+          make -j2 target/linux/compile V=s 2>&1 | tee "$GITHUB_WORKSPACE/diagnostics/kernel-build.log"
+
+      - name: Build AmneziaWG kernel module
         working-directory: openwrt
         shell: bash
         run: |
