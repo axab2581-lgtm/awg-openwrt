@@ -84,7 +84,7 @@ jobs:
           PKG="${PACKAGES[0]}"
           tar -xOf "$PKG" .PKGINFO > "$GITHUB_WORKSPACE/diagnostics/kmod-amneziawg.PKGINFO"
           cat "$GITHUB_WORKSPACE/diagnostics/kmod-amneziawg.PKGINFO"
-          if ! grep -Fqx "depend = $EXPECTED" "$GITHUB_WORKSPACE/diagnostics/kmod-amneziawg.PKGINFO"; then
+          if ! grep -Fqx "depend = kernel (= 6.12.74~50c25113c07569854428230fbdfd4c63-r1)" "$GITHUB_WORKSPACE/diagnostics/kmod-amneziawg.PKGINFO"; then
             echo "ABI MISMATCH: package does not depend on the exact kernel ABI from the router."
             exit 1
           fi
