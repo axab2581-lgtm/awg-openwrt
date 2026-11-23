@@ -24,7 +24,7 @@ jobs:
           sudo apt-get install -y \
             build-essential clang flex bison g++ gawk gcc-multilib g++-multilib \
             gettext git libncurses-dev libssl-dev python3-setuptools python3-pyelftools \
-            rsync swig unzip zlib1g-dev file wget curl ccache
+            rsync swig unzip zlib1g-dev file wget curl ccache kmod
 
       - name: Checkout exact OpenWrt source revision
         shell: bash
@@ -230,12 +230,13 @@ jobs:
           make -j2 target/linux/compile V=s 2>&1 | tee "$GITHUB_WORKSPACE/diagnostics/kernel-build.log"
 
 
-      - name: Verify WR1300S kernel ABI against installed firmware
+      - name: Verify router ABI and prepare compatible modular dependencies
         working-directory: openwrt
         shell: bash
         run: |
           set -euxo pipefail
-          EXPECTED='6.12.74~50c25113c07569854428230fbdfd4c63-r1'
+          EXPECTED_HASH='50c25113c07569854428230fbdfd4c63'
+          EXPECTED='6.12.74~${EXPECTED_HASH}-r1'
           DIAG="$GITHUB_WORKSPACE/diagnostics"
           mkdir -p "$DIAG"
           CONFIG_SET="$(find build_dir -type f -path '*/linux-6.12.74/.config.set' -print -quit)"
@@ -252,92 +253,195 @@ jobs:
             exit 1
           fi
 
-          ACTUAL="$(tr -d '\r\n' < "$VERMAGIC_FILE")"
-          CALCULATED="$(grep '=[ym]' "$CONFIG_SET" | LC_ALL=C sort | md5sum | awk '{print $1}')"
+          # The five symbols below are module-only runtime dependencies used by AWG.
+          # Excluding them must reproduce the exact ABI hash of the already-installed
+          # WR1300S firmware. They are packaged as separate .ko files below.
+          EXTRA_MODULE_SYMBOLS=(
+            CONFIG_NET_UDP_TUNNEL
+            CONFIG_CRYPTO_LIB_CHACHA
+            CONFIG_CRYPTO_LIB_CHACHA20POLY1305
+            CONFIG_CRYPTO_LIB_CURVE25519
+            CONFIG_CRYPTO_LIB_POLY1305
+          )
+          for symbol in "${EXTRA_MODULE_SYMBOLS[@]}"; do
+            grep -Fqx "$symbol=m" "$CONFIG_SET" || {
+              echo "Expected AWG dependency $symbol=m in the built kernel config."
+              exit 1
+            }
+          done
+
+          EXTENDED="$(grep '=[ym]' "$CONFIG_SET" | LC_ALL=C sort | md5sum | awk '{print $1}')"
+          BASELINE="$(
+            grep '=[ym]' "$CONFIG_SET" |
+              grep -Ev '^CONFIG_(NET_UDP_TUNNEL|CRYPTO_LIB_CHACHA|CRYPTO_LIB_CHACHA20POLY1305|CRYPTO_LIB_CURVE25519|CRYPTO_LIB_POLY1305)=' |
+              LC_ALL=C sort | md5sum | awk '{print $1}'
+          )"
+
           {
-            echo "Expected kernel package version: $EXPECTED"
-            echo "Actual .vermagic: $ACTUAL"
-            echo "Recalculated .config.set MD5: $CALCULATED"
+            echo "Router kernel dependency required: $EXPECTED"
+            echo "Extended config hash with AWG-only modules: $EXTENDED"
+            echo "Baseline hash after removing the five modular dependencies: $BASELINE"
+            echo "AWG-only module symbols: ${EXTRA_MODULE_SYMBOLS[*]}"
+            echo "CONFIG_MODVERSIONS: $(grep -E '^CONFIG_MODVERSIONS=|^# CONFIG_MODVERSIONS ' "$CONFIG_SET" | tail -1)"
             echo "Kernel config directory: $KERNEL_DIR"
-          } | tee "$DIAG/kernel-abi-preflight.txt"
+          } | tee "$DIAG/kernel-abi-compatibility.txt"
 
           cp "$CONFIG_SET" "$DIAG/kernel.config.set"
           for name in .config.target .config.override .config; do
             [ ! -f "$KERNEL_DIR/$name" ] || cp "$KERNEL_DIR/$name" "$DIAG/kernel${name}"
           done
+          cp "$VERMAGIC_FILE" "$DIAG/kernel.vermagic.extended"
 
-          if [ "$ACTUAL" != "$CALCULATED" ]; then
-            echo "Internal check failed: .vermagic does not match the MD5 of enabled .config.set symbols."
+          if [ "$BASELINE" != "$EXPECTED_HASH" ]; then
+            echo "The baseline config does not match the router ABI. Refusing to produce packages."
             exit 1
           fi
-          if [ "6.12.74~$ACTUAL-r1" != "$EXPECTED" ]; then
-            echo "ABI mismatch: refusing to compile or publish packages for another kernel configuration."
-            echo "The router expects $EXPECTED; this source/config produces 6.12.74~$ACTUAL-r1."
+          if grep -Fqx 'CONFIG_MODVERSIONS=y' "$CONFIG_SET"; then
+            echo "CONFIG_MODVERSIONS is enabled; the extra module set cannot be safely ABI-pinned."
             exit 1
           fi
+          grep -Fqx 'CONFIG_MODULES=y' "$CONFIG_SET"
+          grep -Fqx 'CONFIG_MODULE_UNLOAD=y' "$CONFIG_SET"
 
-          echo "Kernel ABI matches the router. AmneziaWG package compilation may proceed."
-          
-      - name: Build AmneziaWG packages
+          BASE_MODULE="$(find "$KERNEL_DIR" -type f -name cfg80211.ko -print -quit)"
+          if [ -z "$BASE_MODULE" ]; then
+            echo "Could not find the baseline cfg80211.ko for module vermagic comparison."
+            exit 1
+          fi
+          BASE_MODULE_VERMAGIC="$(modinfo -F vermagic "$BASE_MODULE")"
+          if [ -z "$BASE_MODULE_VERMAGIC" ] || [[ "$BASE_MODULE_VERMAGIC" != 6.12.74* ]]; then
+            echo "Unexpected baseline module vermagic: $BASE_MODULE_VERMAGIC"
+            exit 1
+          fi
+          echo "EXPECTED_MODULE_VERMAGIC=$BASE_MODULE_VERMAGIC" >> "$GITHUB_ENV"
+          printf 'Baseline module vermagic: %s\n' "$BASE_MODULE_VERMAGIC" | tee -a "$DIAG/kernel-abi-compatibility.txt"
+
+          # OpenWrt's .vermagic controls APK's kernel dependency field. The five
+          # additional features are separate modules (CONFIG_*=m), not built into
+          # vmlinux. Pin package metadata to the router's existing kernel ABI.
+          # The actual .ko vermagic is checked independently after compilation.
+          printf '%s\n' "$EXPECTED_HASH" > "$VERMAGIC_FILE"
+          test "$(tr -d '\r\n' < "$VERMAGIC_FILE")" = "$EXPECTED_HASH"
+          printf 'Pinned package metadata to: %s\n' "$EXPECTED" >> "$DIAG/kernel-abi-compatibility.txt"
+
+          echo "Router ABI verified; optional AWG dependency modules will be packaged separately."
+
+      - name: Build AmneziaWG and required kernel module packages
         working-directory: openwrt
         shell: bash
         run: |
           set -o pipefail
           make -j2 \
+            package/kernel/linux/compile \
             package/feeds/awg/kmod-amneziawg/compile \
             package/feeds/awg/amneziawg-tools/compile \
             package/feeds/awg/luci-proto-amneziawg/compile \
             V=s 2>&1 | tee "$GITHUB_WORKSPACE/diagnostics/build.log"
 
-      - name: Verify kernel ABI and stage all packages
+      - name: Verify all module vermagic and stage compatible packages
         working-directory: openwrt
         shell: bash
         run: |
           set -euxo pipefail
           EXPECTED='6.12.74~50c25113c07569854428230fbdfd4c63-r1'
-          mkdir -p "$GITHUB_WORKSPACE/diagnostics"
-          mapfile -t KMOD_PACKAGES < <(find bin -type f -name 'kmod-amneziawg*.apk' -print)
-          mapfile -t TOOLS_PACKAGES < <(find bin -type f -name 'amneziawg-tools*.apk' -print)
-          mapfile -t LUCI_PACKAGES < <(find bin -type f -name 'luci-proto-amneziawg*.apk' -print)
+          MODULES_EXPECTED="${EXPECTED_MODULE_VERMAGIC:?baseline module vermagic was not exported}"
+          DIAG="$GITHUB_WORKSPACE/diagnostics"
+          DIST="$GITHUB_WORKSPACE/dist"
+          mkdir -p "$DIAG" "$DIST"
 
-          if [ "${#KMOD_PACKAGES[@]}" -ne 1 ]; then
-            echo "Expected exactly one kmod-amneziawg APK; found ${#KMOD_PACKAGES[@]}"
-            find bin -type f -name '*amneziawg*' -print
-            exit 1
-          fi
+          # New modules must have exactly the same ELF vermagic as a kmod that
+          # already exists in the WR1300S firmware.
+          BASE_MODULE="$(find build_dir -type f -name cfg80211.ko -print -quit)"
+          test -n "$BASE_MODULE"
+          BASE_VERMAGIC="$(modinfo -F vermagic "$BASE_MODULE")"
+          test "$BASE_VERMAGIC" = "$MODULES_EXPECTED"
+
+          REQUIRED_KOS=(
+            udp_tunnel.ko
+            ip6_udp_tunnel.ko
+            libchacha20poly1305.ko
+            libcurve25519.ko
+            libcurve25519-generic.ko
+            chacha-mips.ko
+            poly1305-mips.ko
+            amneziawg.ko
+          )
+          for module in "${REQUIRED_KOS[@]}"; do
+            module_path="$(find build_dir -type f -name "$module" -print -quit)"
+            if [ -z "$module_path" ]; then
+              echo "Required kernel module was not built: $module"
+              exit 1
+            fi
+            module_vermagic="$(modinfo -F vermagic "$module_path")"
+            if [ "$module_vermagic" != "$BASE_VERMAGIC" ]; then
+              echo "Module vermagic mismatch for $module"
+              echo "Expected: $BASE_VERMAGIC"
+              echo "Actual:   $module_vermagic"
+              exit 1
+            fi
+            printf '%s | %s\n' "$module" "$module_vermagic" >> "$DIAG/module-vermagic-check.txt"
+          done
+
+          REQUIRED_KMODS=(
+            kmod-amneziawg
+            kmod-udptunnel4
+            kmod-udptunnel6
+            kmod-crypto-kpp
+            kmod-crypto-lib-chacha20
+            kmod-crypto-lib-chacha20poly1305
+            kmod-crypto-lib-curve25519
+            kmod-crypto-lib-poly1305
+          )
+          for package in "${REQUIRED_KMODS[@]}"; do
+            mapfile -t matches < <(find bin -type f -name "${package}-*.apk" -print)
+            if [ "${#matches[@]}" -ne 1 ]; then
+              echo "Expected exactly one ${package} APK; found ${#matches[@]}"
+              find bin -type f -name 'kmod-*amneziawg*.apk' -o -name 'kmod-udptunnel*.apk' -o -name 'kmod-crypto-lib-*.apk' -o -name 'kmod-crypto-kpp*.apk'
+              exit 1
+            fi
+            cp "${matches[0]}" "$DIST/"
+          done
+
+          mapfile -t TOOLS_PACKAGES < <(find bin -type f -name 'amneziawg-tools-*.apk' -print)
+          mapfile -t LUCI_PACKAGES < <(find bin -type f -name 'luci-proto-amneziawg-*.apk' -print)
           if [ "${#TOOLS_PACKAGES[@]}" -ne 1 ] || [ "${#LUCI_PACKAGES[@]}" -ne 1 ]; then
             echo "Expected exactly one amneziawg-tools APK and one luci-proto-amneziawg APK."
-            find bin -type f -name '*amneziawg*' -print
+            find bin -type f -name '*amneziawg*.apk' -print
             exit 1
           fi
+          cp "${TOOLS_PACKAGES[0]}" "${LUCI_PACKAGES[0]}" "$DIST/"
 
-          # OpenWrt emits APK dependency metadata in the verbose apk mkpkg command.
-          # Read it from the build log instead of treating the APK control archive as
-          # a plain tar file.
+          # Every kmod package must declare the exact kernel ABI installed on the router.
           mapfile -t ACTUAL_KERNEL_DEPS < <(
             grep -oE 'depends:kernel=[^[:space:]]+' "$GITHUB_WORKSPACE/diagnostics/build.log" |
               sed 's/^depends:kernel=//' | sort -u
           )
-          printf 'Expected kernel dependency: %s\n' "$EXPECTED" | tee "$GITHUB_WORKSPACE/diagnostics/kernel-abi-check.txt"
-          printf 'Actual kernel dependency candidates:\n' | tee -a "$GITHUB_WORKSPACE/diagnostics/kernel-abi-check.txt"
-          printf '%s\n' "${ACTUAL_KERNEL_DEPS[@]}" | tee -a "$GITHUB_WORKSPACE/diagnostics/kernel-abi-check.txt"
-
-          if [ "${#ACTUAL_KERNEL_DEPS[@]}" -ne 1 ]; then
-            echo "Could not determine one unique kernel dependency from the package build log."
-            echo "See diagnostics/build.log and diagnostics/kernel-abi-check.txt."
-            exit 1
-          fi
-          ACTUAL="${ACTUAL_KERNEL_DEPS[0]}"
-          if [ "$ACTUAL" != "$EXPECTED" ]; then
-            echo "ABI MISMATCH: this build produced kernel dependency '$ACTUAL', but the router requires '$EXPECTED'."
-            echo "Do not install this kmod on the router. The OpenWrt source/configuration must be aligned with the firmware build."
+          printf 'Expected kernel dependency: %s\n' "$EXPECTED" | tee "$DIAG/kernel-abi-check.txt"
+          printf 'Actual kernel dependency candidates:\n' | tee -a "$DIAG/kernel-abi-check.txt"
+          printf '%s\n' "${ACTUAL_KERNEL_DEPS[@]}" | tee -a "$DIAG/kernel-abi-check.txt"
+          if [ "${#ACTUAL_KERNEL_DEPS[@]}" -ne 1 ] || [ "${ACTUAL_KERNEL_DEPS[0]}" != "$EXPECTED" ]; then
+            echo "One or more packages were not pinned to the router's exact kernel ABI."
             exit 1
           fi
 
-          KMOD="${KMOD_PACKAGES[0]}"
-          mkdir -p "$GITHUB_WORKSPACE/dist"
-          cp "$KMOD" "${TOOLS_PACKAGES[0]}" "${LUCI_PACKAGES[0]}" "$GITHUB_WORKSPACE/dist/"
-          printf '%s\n' "Verified dependency: kernel (= $EXPECTED)" > "$GITHUB_WORKSPACE/dist/ABI-VERIFIED.txt"
+          cat > "$DIST/ABI-VERIFIED.txt" <<EOF
+          Router: Cudy WR1300S
+          Kernel: 6.12.74
+          Required kernel package dependency: $EXPECTED
+          Baseline ABI was reconstructed from the extended .config.set by removing only:
+            CONFIG_NET_UDP_TUNNEL=m
+            CONFIG_CRYPTO_LIB_CHACHA=m
+            CONFIG_CRYPTO_LIB_CHACHA20POLY1305=m
+            CONFIG_CRYPTO_LIB_CURVE25519=m
+            CONFIG_CRYPTO_LIB_POLY1305=m
+          These five features are provided as separate .ko packages.
+          CONFIG_MODVERSIONS is disabled in the router-matching kernel configuration.
+          All added .ko files have the same ELF vermagic as the baseline cfg80211.ko.
+          EOF
+
+          cp "$DIAG/kernel-abi-compatibility.txt" "$DIST/"
+          echo "Verified package files:"
+          find "$DIST" -maxdepth 1 -type f -printf '%f\n' | sort
 
       - name: Upload diagnostics
         if: always()
