@@ -323,7 +323,7 @@ jobs:
           grep -Fqx '# CONFIG_MODULE_SIG is not set' "$CONFIG_SET"
           grep -Fqx '# CONFIG_MODULE_COMPRESS is not set' "$CONFIG_SET"
 
-          BASE_MODULE="$(find build_dir -type f -path '*/backports-*/net/wireless/cfg80211.ko' -print -quit)"
+          BASE_MODULE="$(find build_dir -type f -name cfg80211.ko -print -quit)"
           if [ -z "$BASE_MODULE" ]; then
             echo "Could not find the baseline cfg80211.ko for module vermagic comparison."
             exit 1
