@@ -42,8 +42,11 @@ jobs:
           cp -a "$GITHUB_WORKSPACE/kmod-amneziawg" "$GITHUB_WORKSPACE/awg-feed/"
           cp -a "$GITHUB_WORKSPACE/amneziawg-tools" "$GITHUB_WORKSPACE/awg-feed/"
           cp -a "$GITHUB_WORKSPACE/luci-proto-amneziawg" "$GITHUB_WORKSPACE/awg-feed/"
+          # Keep the source tree's official package and LuCI feed definitions.
+          # OpenWrt has a "packages" feed, not a "base" feed.
+          cp feeds.conf.default feeds.conf
           echo "src-link awg $GITHUB_WORKSPACE/awg-feed" >> feeds.conf
-          ./scripts/feeds update base
+          ./scripts/feeds update packages
           ./scripts/feeds update luci
           ./scripts/feeds update awg
           ./scripts/feeds install -p awg kmod-amneziawg
