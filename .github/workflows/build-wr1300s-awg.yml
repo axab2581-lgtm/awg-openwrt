@@ -244,8 +244,9 @@ jobs:
           set -o pipefail
           # target/linux/compile prepares the kernel config, but does not guarantee
           # that package kernel modules (including cfg80211.ko) have been emitted.
-          # Build the baseline package set before inspecting cfg80211.ko.
-          make -j2 package/kernel/linux/compile V=s 2>&1 | tee "$GITHUB_WORKSPACE/diagnostics/kernel-modules-build.log"
+          # cfg80211.ko is emitted by package/kernel/mac80211, not package/kernel/linux.
+          # Build both the kernel package metadata and mac80211 module packages before inspection.
+          make -j2 package/kernel/linux/compile package/kernel/mac80211/compile V=s 2>&1 | tee "$GITHUB_WORKSPACE/diagnostics/kernel-modules-build.log"
 
       - name: Verify router ABI and prepare compatible modular dependencies
         working-directory: openwrt
