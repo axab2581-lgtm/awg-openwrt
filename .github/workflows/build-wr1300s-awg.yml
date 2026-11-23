@@ -236,7 +236,7 @@ jobs:
         run: |
           set -euxo pipefail
           EXPECTED_HASH='50c25113c07569854428230fbdfd4c63'
-          EXPECTED='6.12.74~${EXPECTED_HASH}-r1'
+          EXPECTED="6.12.74~${EXPECTED_HASH}-r1"
           DIAG="$GITHUB_WORKSPACE/diagnostics"
           mkdir -p "$DIAG"
           CONFIG_SET="$(find build_dir -type f -path '*/linux-6.12.74/.config.set' -print -quit)"
@@ -359,6 +359,7 @@ jobs:
           REQUIRED_KOS=(
             udp_tunnel.ko
             ip6_udp_tunnel.ko
+            libchacha.ko
             libchacha20poly1305.ko
             libcurve25519.ko
             libcurve25519-generic.ko
