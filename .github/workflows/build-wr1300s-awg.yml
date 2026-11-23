@@ -420,6 +420,27 @@ jobs:
           fi
           cp "${TOOLS_PACKAGES[0]}" "${LUCI_PACKAGES[0]}" "$DIST/"
 
+          # Stage runtime user-space dependencies too, so installation does not need
+          # to pull mismatched packages from a moving snapshot feed.
+          REQUIRED_USERSPACE_PACKAGES=(
+            ip-tiny
+            libnl-tiny1
+            resolveip
+            luci-lib-uqr
+            ucode
+            libucode20230711
+            libjson-c5
+          )
+          for package in "${REQUIRED_USERSPACE_PACKAGES[@]}"; do
+            mapfile -t matches < <(find bin -type f -name "${package}-*.apk" -print)
+            if [ "${#matches[@]}" -ne 1 ]; then
+              echo "Expected exactly one ${package} APK; found ${#matches[@]}"
+              find bin -type f -name "${package}*.apk" -print
+              exit 1
+            fi
+            cp "${matches[0]}" "$DIST/"
+          done
+
           # Every kmod package must declare the exact kernel ABI installed on the router.
           mapfile -t ACTUAL_KERNEL_DEPS < <(
             grep -oE 'depends:kernel=[^[:space:]]+' "$GITHUB_WORKSPACE/diagnostics/build.log" |
@@ -432,6 +453,13 @@ jobs:
             echo "One or more packages were not pinned to the router's exact kernel ABI."
             exit 1
           fi
+
+          cat > "$DIST/INSTALL.txt" <<'EOF'
+          Place all APK files in one directory on the router, then run:
+            apk add /tmp/awg-packages/*.apk
+          This bundle includes AWG kernel modules, tools, LuCI support, and the
+          user-space dependencies identified by the package metadata.
+          EOF
 
           cat > "$DIST/ABI-VERIFIED.txt" <<EOF
           Router: Cudy WR1300S
