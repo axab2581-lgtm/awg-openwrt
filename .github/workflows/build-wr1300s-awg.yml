@@ -237,6 +237,16 @@ jobs:
           make -j2 target/linux/compile V=s 2>&1 | tee "$GITHUB_WORKSPACE/diagnostics/kernel-build.log"
 
 
+      - name: Build baseline kernel module packages before ABI vermagic inspection
+        working-directory: openwrt
+        shell: bash
+        run: |
+          set -o pipefail
+          # target/linux/compile prepares the kernel config, but does not guarantee
+          # that package kernel modules (including cfg80211.ko) have been emitted.
+          # Build the baseline package set before inspecting cfg80211.ko.
+          make -j2 package/kernel/linux/compile V=s 2>&1 | tee "$GITHUB_WORKSPACE/diagnostics/kernel-modules-build.log"
+
       - name: Verify router ABI and prepare compatible modular dependencies
         working-directory: openwrt
         shell: bash
@@ -341,7 +351,6 @@ jobs:
         run: |
           set -o pipefail
           make -j2 \
-            package/kernel/linux/compile \
             package/feeds/awg/kmod-amneziawg/compile \
             package/feeds/awg/amneziawg-tools/compile \
             package/feeds/awg/luci-proto-amneziawg/compile \
@@ -477,6 +486,13 @@ jobs:
           EOF
 
           cp "$DIAG/kernel-abi-compatibility.txt" "$DIST/"
+          PACKAGE_COUNT="$(find "$DIST" -maxdepth 1 -type f -name '*.apk' | wc -l)"
+          if [ "$PACKAGE_COUNT" -ne 17 ]; then
+            echo "Expected exactly 17 APK packages in the verified bundle; found $PACKAGE_COUNT"
+            find "$DIST" -maxdepth 1 -type f -printf '%f\n' | sort
+            exit 1
+          fi
+          echo "Verified package count: $PACKAGE_COUNT (8 kernel modules + 9 user-space/LuCI packages)"
           echo "Verified package files:"
           find "$DIST" -maxdepth 1 -type f -printf '%f\n' | sort
 
