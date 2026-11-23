@@ -54,11 +54,169 @@ jobs:
           cat > .config <<'EOF'
           CONFIG_TARGET_ramips=y
           CONFIG_TARGET_ramips_mt7621=y
-          CONFIG_TARGET_DEVICE_ramips_mt7621_DEVICE_cudy_wr1300s=y
+          CONFIG_TARGET_ramips_mt7621_DEVICE_cudy_wr1300s=y
           CONFIG_PACKAGE_kmod-amneziawg=m
           EOF
           make defconfig
-          grep -E '^(CONFIG_TARGET_ramips=y|CONFIG_TARGET_ramips_mt7621=y|CONFIG_TARGET_DEVICE_ramips_mt7621_DEVICE_cudy_wr1300s=y|CONFIG_PACKAGE_kmod-amneziawg=m)$' .config
+          grep -E '^(CONFIG_TARGET_ramips=y|CONFIG_TARGET_ramips_mt7621=y|CONFIG_TARGET_ramips_mt7621_DEVICE_cudy_wr1300s=y|CONFIG_PACKAGE_kmod-amneziawg=m)
+          mkdir -p "$GITHUB_WORKSPACE/diagnostics"
+          cp .config "$GITHUB_WORKSPACE/diagnostics/openwrt.config"
+
+      - name: Build OpenWrt host tools
+        working-directory: openwrt
+        shell: bash
+        run: |
+          set -o pipefail
+          make -j2 tools/install V=s 2>&1 | tee "$GITHUB_WORKSPACE/diagnostics/tools-build.log"
+
+      - name: Build and install target toolchain
+        working-directory: openwrt
+        shell: bash
+        run: |
+          set -o pipefail
+          make -j2 toolchain/install V=s 2>&1 | tee "$GITHUB_WORKSPACE/diagnostics/toolchain-build.log"
+
+      - name: Prepare and build the exact target kernel
+        working-directory: openwrt
+        shell: bash
+        run: |
+          set -o pipefail
+          make -j2 target/linux/compile V=s 2>&1 | tee "$GITHUB_WORKSPACE/diagnostics/kernel-build.log"
+
+      - name: Build AmneziaWG kernel module
+        working-directory: openwrt
+        shell: bash
+        run: |
+          set -o pipefail
+          make -j2 package/feeds/awg/kmod-amneziawg/compile V=s 2>&1 | tee "$GITHUB_WORKSPACE/diagnostics/build.log"
+
+      - name: Verify kernel ABI before publishing
+        working-directory: openwrt
+        shell: bash
+        run: |
+          set -euxo pipefail
+          EXPECTED='kernel-6.12.74~50c25113c07569854428230fbdfd4c63-r1'
+          mapfile -t PACKAGES < <(find bin -type f -name 'kmod-amneziawg*.apk' -print)
+          if [ "${#PACKAGES[@]}" -ne 1 ]; then
+            echo "Expected exactly one kmod-amneziawg APK; found ${#PACKAGES[@]}"
+            find bin -type f -name '*amneziawg*' -print
+            exit 1
+          fi
+          PKG="${PACKAGES[0]}"
+          "$PWD/staging_dir/host/bin/apk" adbdump "$PKG" > "$GITHUB_WORKSPACE/diagnostics/kmod-amneziawg.PKGINFO.json"
+          cat "$GITHUB_WORKSPACE/diagnostics/kmod-amneziawg.PKGINFO.json"
+          python3 - "$GITHUB_WORKSPACE/diagnostics/kmod-amneziawg.PKGINFO.json" <<'PY'
+          import json, sys
+          data = json.load(open(sys.argv[1]))
+          packages = data.get("packages", data if isinstance(data, list) else [])
+          if isinstance(packages, dict):
+              packages = [packages]
+          expected = "6.12.74~50c25113c07569854428230fbdfd4c63-r1"
+          found = False
+          for package in packages:
+              if package.get("name") == "kmod-amneziawg":
+                  deps = package.get("depends", package.get("depend", []))
+                  found = any(expected in str(dep) for dep in (deps if isinstance(deps, list) else [deps]))
+          if not found:
+              raise SystemExit("ABI MISMATCH: package does not depend on the exact router kernel ABI")
+          PY
+          mkdir -p "$GITHUB_WORKSPACE/dist"
+          cp "$PKG" "$GITHUB_WORKSPACE/dist/"
+          cp "$GITHUB_WORKSPACE/diagnostics/kmod-amneziawg.PKGINFO" "$GITHUB_WORKSPACE/dist/"
+          printf '%s\\n' "Verified dependency: $EXPECTED" > "$GITHUB_WORKSPACE/dist/ABI-VERIFIED.txt"
+
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wr1300s-awg-build-diagnostics
+          path: diagnostics/
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Upload verified package
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wr1300s-amneziawg-kmod-verified
+          path: dist/
+          if-no-files-found: error
+          retention-days: 30
+ .config
+          grep -q '^CONFIG_TARGET_PROFILE="DEVICE_cudy_wr1300s"
+          mkdir -p "$GITHUB_WORKSPACE/diagnostics"
+          cp .config "$GITHUB_WORKSPACE/diagnostics/openwrt.config"
+
+      - name: Build OpenWrt host tools
+        working-directory: openwrt
+        shell: bash
+        run: |
+          set -o pipefail
+          make -j2 tools/install V=s 2>&1 | tee "$GITHUB_WORKSPACE/diagnostics/tools-build.log"
+
+      - name: Build and install target toolchain
+        working-directory: openwrt
+        shell: bash
+        run: |
+          set -o pipefail
+          make -j2 toolchain/install V=s 2>&1 | tee "$GITHUB_WORKSPACE/diagnostics/toolchain-build.log"
+
+      - name: Prepare and build the exact target kernel
+        working-directory: openwrt
+        shell: bash
+        run: |
+          set -o pipefail
+          make -j2 target/linux/compile V=s 2>&1 | tee "$GITHUB_WORKSPACE/diagnostics/kernel-build.log"
+
+      - name: Build AmneziaWG kernel module
+        working-directory: openwrt
+        shell: bash
+        run: |
+          set -o pipefail
+          make -j2 package/feeds/awg/kmod-amneziawg/compile V=s 2>&1 | tee "$GITHUB_WORKSPACE/diagnostics/build.log"
+
+      - name: Verify kernel ABI before publishing
+        working-directory: openwrt
+        shell: bash
+        run: |
+          set -euxo pipefail
+          EXPECTED='kernel-6.12.74~50c25113c07569854428230fbdfd4c63-r1'
+          mapfile -t PACKAGES < <(find bin -type f -name 'kmod-amneziawg*.apk' -print)
+          if [ "${#PACKAGES[@]}" -ne 1 ]; then
+            echo "Expected exactly one kmod-amneziawg APK; found ${#PACKAGES[@]}"
+            find bin -type f -name '*amneziawg*' -print
+            exit 1
+          fi
+          PKG="${PACKAGES[0]}"
+          tar -xOf "$PKG" .PKGINFO > "$GITHUB_WORKSPACE/diagnostics/kmod-amneziawg.PKGINFO"
+          cat "$GITHUB_WORKSPACE/diagnostics/kmod-amneziawg.PKGINFO"
+          if ! grep -Fqx "depend = kernel (= 6.12.74~50c25113c07569854428230fbdfd4c63-r1)" "$GITHUB_WORKSPACE/diagnostics/kmod-amneziawg.PKGINFO"; then
+            echo "ABI MISMATCH: package does not depend on the exact kernel ABI from the router."
+            exit 1
+          fi
+          mkdir -p "$GITHUB_WORKSPACE/dist"
+          cp "$PKG" "$GITHUB_WORKSPACE/dist/"
+          cp "$GITHUB_WORKSPACE/diagnostics/kmod-amneziawg.PKGINFO" "$GITHUB_WORKSPACE/dist/"
+          printf '%s\\n' "Verified dependency: $EXPECTED" > "$GITHUB_WORKSPACE/dist/ABI-VERIFIED.txt"
+
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wr1300s-awg-build-diagnostics
+          path: diagnostics/
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Upload verified package
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wr1300s-amneziawg-kmod-verified
+          path: dist/
+          if-no-files-found: error
+          retention-days: 30
+ .config
           mkdir -p "$GITHUB_WORKSPACE/diagnostics"
           cp .config "$GITHUB_WORKSPACE/diagnostics/openwrt.config"
 
