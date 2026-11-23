@@ -76,6 +76,15 @@ jobs:
           grep -n 'kmod-amneziawg' .config || true
           cp .config "$GITHUB_WORKSPACE/diagnostics/openwrt.config"
 
+      - name: Build OpenWrt host tools
+        working-directory: openwrt
+        shell: bash
+        run: |
+          set -o pipefail
+          make -j2 tools/install V=s 2>&1 | tee "$GITHUB_WORKSPACE/diagnostics/tools-build.log"
+
+
+
       - name: Preflight kernel ABI before expensive compilation
         working-directory: openwrt
         shell: bash
@@ -127,14 +136,6 @@ jobs:
 
           echo "Kernel ABI matches the router. Expensive compilation may proceed."
           
-      - name: Build OpenWrt host tools
-        working-directory: openwrt
-        shell: bash
-        run: |
-          set -o pipefail
-          make -j2 tools/install V=s 2>&1 | tee "$GITHUB_WORKSPACE/diagnostics/tools-build.log"
-
-
       - name: Build and install target toolchain
         working-directory: openwrt
         shell: bash
