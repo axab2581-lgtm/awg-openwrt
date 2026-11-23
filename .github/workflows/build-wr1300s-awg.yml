@@ -16,7 +16,7 @@ permissions:
 
 concurrency:
   group: wr1300s-awg-build
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -368,7 +368,6 @@ jobs:
           REQUIRED_KOS=(
             udp_tunnel.ko
             ip6_udp_tunnel.ko
-            libchacha.ko
             libchacha20poly1305.ko
             libcurve25519.ko
             libcurve25519-generic.ko
