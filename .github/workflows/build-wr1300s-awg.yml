@@ -58,6 +58,7 @@ jobs:
         run: |
           set -euxo pipefail
           mkdir -p "$GITHUB_WORKSPACE/diagnostics"
+          mkdir -p "$GITHUB_WORKSPACE/diagnostics"
           cat > .config <<'EOF'
           CONFIG_TARGET_ramips=y
           CONFIG_TARGET_ramips_mt7621=y
@@ -66,7 +67,14 @@ jobs:
           CONFIG_PACKAGE_luci-proto-amneziawg=y
           EOF
           make defconfig
-          grep -q '^CONFIG_TARGET_ramips=y
+          grep -Fqx 'CONFIG_TARGET_ramips=y' .config
+          grep -Fqx 'CONFIG_TARGET_ramips_mt7621=y' .config
+          grep -Fqx 'CONFIG_TARGET_ramips_mt7621_DEVICE_cudy_wr1300s=y' .config
+          grep -Fqx 'CONFIG_PACKAGE_amneziawg-tools=y' .config
+          grep -Fqx 'CONFIG_PACKAGE_luci-proto-amneziawg=y' .config
+          echo "Kernel module selection after defconfig (diagnostic only):"
+          grep -n 'kmod-amneziawg' .config || true
+          cp .config "$GITHUB_WORKSPACE/diagnostics/openwrt.config"
 
       - name: Build OpenWrt host tools
         working-directory: openwrt
