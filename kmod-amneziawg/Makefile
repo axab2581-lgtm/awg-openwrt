@@ -19,6 +19,9 @@ define KernelPackage/amneziawg
 	CATEGORY:=Kernel modules
 	SUBMENU:=Network Support
 	TITLE:=AmneziaWG VPN Kernel Module
+	# This is an out-of-tree module; require kernel module support, not an
+	# in-tree CONFIG_AMNEZIAWG symbol (which does not exist).
+	KCONFIG:=CONFIG_MODULES
 	FILES:=$(PKG_BUILD_DIR)/$(MAKE_PATH)/amneziawg.ko
 	DEPENDS:= \
 		+kmod-udptunnel4 \
