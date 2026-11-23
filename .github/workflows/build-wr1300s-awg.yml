@@ -114,6 +114,7 @@ jobs:
         run: |
           set -euxo pipefail
           EXPECTED='6.12.74~50c25113c07569854428230fbdfd4c63-r1'
+          mkdir -p "$GITHUB_WORKSPACE/diagnostics"
           mapfile -t KMOD_PACKAGES < <(find bin -type f -name 'kmod-amneziawg*.apk' -print)
           mapfile -t TOOLS_PACKAGES < <(find bin -type f -name 'amneziawg-tools*.apk' -print)
           mapfile -t LUCI_PACKAGES < <(find bin -type f -name 'luci-proto-amneziawg*.apk' -print)
@@ -129,17 +130,32 @@ jobs:
             exit 1
           fi
 
-          KMOD="${KMOD_PACKAGES[0]}"
-          tar -xOf "$KMOD" .PKGINFO > "$GITHUB_WORKSPACE/diagnostics/kmod-amneziawg.PKGINFO"
-          cat "$GITHUB_WORKSPACE/diagnostics/kmod-amneziawg.PKGINFO"
-          if ! grep -Fqx "depend = kernel (= $EXPECTED)" "$GITHUB_WORKSPACE/diagnostics/kmod-amneziawg.PKGINFO"; then
-            echo "ABI MISMATCH: package does not depend on the exact router kernel ABI."
+          # OpenWrt emits APK dependency metadata in the verbose apk mkpkg command.
+          # Read it from the build log instead of treating the APK control archive as
+          # a plain tar file.
+          mapfile -t ACTUAL_KERNEL_DEPS < <(
+            grep -oE 'depends:kernel=[^[:space:]]+' "$GITHUB_WORKSPACE/diagnostics/build.log" |
+              sed 's/^depends:kernel=//' | sort -u
+          )
+          printf 'Expected kernel dependency: %s\n' "$EXPECTED" | tee "$GITHUB_WORKSPACE/diagnostics/kernel-abi-check.txt"
+          printf 'Actual kernel dependency candidates:\n' | tee -a "$GITHUB_WORKSPACE/diagnostics/kernel-abi-check.txt"
+          printf '%s\n' "${ACTUAL_KERNEL_DEPS[@]}" | tee -a "$GITHUB_WORKSPACE/diagnostics/kernel-abi-check.txt"
+
+          if [ "${#ACTUAL_KERNEL_DEPS[@]}" -ne 1 ]; then
+            echo "Could not determine one unique kernel dependency from the package build log."
+            echo "See diagnostics/build.log and diagnostics/kernel-abi-check.txt."
+            exit 1
+          fi
+          ACTUAL="${ACTUAL_KERNEL_DEPS[0]}"
+          if [ "$ACTUAL" != "$EXPECTED" ]; then
+            echo "ABI MISMATCH: this build produced kernel dependency '$ACTUAL', but the router requires '$EXPECTED'."
+            echo "Do not install this kmod on the router. The OpenWrt source/configuration must be aligned with the firmware build."
             exit 1
           fi
 
+          KMOD="${KMOD_PACKAGES[0]}"
           mkdir -p "$GITHUB_WORKSPACE/dist"
           cp "$KMOD" "${TOOLS_PACKAGES[0]}" "${LUCI_PACKAGES[0]}" "$GITHUB_WORKSPACE/dist/"
-          cp "$GITHUB_WORKSPACE/diagnostics/kmod-amneziawg.PKGINFO" "$GITHUB_WORKSPACE/dist/"
           printf '%s\n' "Verified dependency: kernel (= $EXPECTED)" > "$GITHUB_WORKSPACE/dist/ABI-VERIFIED.txt"
 
       - name: Upload diagnostics
