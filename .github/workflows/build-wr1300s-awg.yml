@@ -323,7 +323,7 @@ jobs:
           grep -Fqx '# CONFIG_MODULE_SIG is not set' "$CONFIG_SET"
           grep -Fqx '# CONFIG_MODULE_COMPRESS is not set' "$CONFIG_SET"
 
-          BASE_MODULE="$(find "$KERNEL_DIR" -type f -name cfg80211.ko -print -quit)"
+          BASE_MODULE="$(find build_dir -type f -path '*/backports-*/net/wireless/cfg80211.ko' -print -quit)"
           if [ -z "$BASE_MODULE" ]; then
             echo "Could not find the baseline cfg80211.ko for module vermagic comparison."
             exit 1
@@ -420,6 +420,68 @@ jobs:
             fi
             cp "${matches[0]}" "$DIST/"
           done
+
+          # Audit the actual kernel modules shipped in every kmod APK, not only
+          # the expected filenames found in the build tree.
+          APK_TOOL="$PWD/staging_dir/host/bin/apk"
+          if [ ! -x "$APK_TOOL" ]; then
+            echo "OpenWrt host apk utility is missing: $APK_TOOL"
+            exit 1
+          fi
+
+          MODULE_AUDIT_DIR="$(mktemp -d)"
+          BASE_ELF_FINGERPRINT="$(readelf -h "$BASE_MODULE" | awk -F: '/Class:|Data:|Machine:|Flags:/ { gsub(/^[ 	]+|[ 	]+$/, "", $2); printf "%s=%s\n", $1, $2 }')"
+          if [ -z "$BASE_ELF_FINGERPRINT" ]; then
+            echo "Could not read ELF architecture fields from baseline cfg80211.ko"
+            exit 1
+          fi
+
+          : > "$DIAG/module-vermagic-check.txt"
+          MODULE_COUNT=0
+          for package in "$DIST"/kmod-*.apk; do
+            [ -f "$package" ] || continue
+            package_name="$(basename "$package" .apk)"
+            extract_dir="$MODULE_AUDIT_DIR/$package_name"
+            mkdir -p "$extract_dir"
+            "$APK_TOOL" extract --no-chown --destination "$extract_dir" "$package"
+
+            mapfile -t packaged_modules < <(find "$extract_dir" -type f -name '*.ko' -print | LC_ALL=C sort)
+            if [ "${#packaged_modules[@]}" -eq 0 ]; then
+              echo "Kernel package contains no .ko files: $package_name"
+              exit 1
+            fi
+
+            for module_path in "${packaged_modules[@]}"; do
+              module_vermagic="$(modinfo -F vermagic "$module_path")"
+              if [ -z "$module_vermagic" ] || [ "$module_vermagic" != "$MODULES_EXPECTED" ]; then
+                echo "Packaged module vermagic mismatch: $package_name/$(basename "$module_path")"
+                echo "Expected: $MODULES_EXPECTED"
+                echo "Actual:   $module_vermagic"
+                exit 1
+              fi
+
+              module_elf_fingerprint="$(readelf -h "$module_path" | awk -F: '/Class:|Data:|Machine:|Flags:/ { gsub(/^[ 	]+|[ 	]+$/, "", $2); printf "%s=%s\n", $1, $2 }')"
+              if [ "$module_elf_fingerprint" != "$BASE_ELF_FINGERPRINT" ]; then
+                echo "Packaged module ELF architecture mismatch: $package_name/$(basename "$module_path")"
+                echo "Expected ELF fields:"
+                echo "$BASE_ELF_FINGERPRINT"
+                echo "Actual ELF fields:"
+                echo "$module_elf_fingerprint"
+                exit 1
+              fi
+
+              printf '%s/%s | %s\n' "$package_name" "$(basename "$module_path")" "$module_vermagic" >> "$DIAG/module-vermagic-check.txt"
+              MODULE_COUNT=$((MODULE_COUNT + 1))
+            done
+          done
+
+          if [ "$MODULE_COUNT" -lt "${#REQUIRED_KOS[@]}" ]; then
+            echo "Only $MODULE_COUNT packaged .ko files were audited; expected at least ${#REQUIRED_KOS[@]}."
+            exit 1
+          fi
+          echo "Audited all $MODULE_COUNT .ko files shipped in the kmod APK bundle."
+          echo "ELF baseline:"
+          printf '%s\n' "$BASE_ELF_FINGERPRINT"
 
           mapfile -t TOOLS_PACKAGES < <(find bin -type f -name 'amneziawg-tools-*.apk' -print)
           mapfile -t LUCI_PACKAGES < <(find bin -type f -name 'luci-proto-amneziawg-*.apk' -print)
