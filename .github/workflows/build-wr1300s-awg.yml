@@ -521,9 +521,13 @@ jobs:
           done
 
           # Every kmod package must declare the exact kernel ABI installed on the router.
+          # Package metadata is logged both as an unquoted dependency token and
+          # inside a quoted APK control-field dump. Strip trailing quote characters
+          # so both representations normalize to the same kernel ABI value.
           mapfile -t ACTUAL_KERNEL_DEPS < <(
             grep -oE 'depends:kernel=[^[:space:]]+' "$GITHUB_WORKSPACE/diagnostics/build.log" |
-              sed 's/^depends:kernel=//' | sort -u
+              sed 's/^depends:kernel=//; s/["'\'' ]*$//' |
+              sort -u
           )
           printf 'Expected kernel dependency: %s\n' "$EXPECTED" | tee "$DIAG/kernel-abi-check.txt"
           printf 'Actual kernel dependency candidates:\n' | tee -a "$DIAG/kernel-abi-check.txt"
