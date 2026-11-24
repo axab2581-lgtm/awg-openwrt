@@ -412,7 +412,12 @@ jobs:
             kmod-crypto-lib-poly1305
           )
           for package in "${REQUIRED_KMODS[@]}"; do
-            mapfile -t matches < <(find bin -type f -name "${package}-*.apk" -print)
+            # Match the main ucode package only, not its ucode-mod-* subpackages.
+            if [ "$package" = "ucode" ]; then
+              mapfile -t matches < <(find bin -type f -name 'ucode-[0-9]*.apk' -print)
+            else
+              mapfile -t matches < <(find bin -type f -name "${package}-*.apk" -print)
+            fi
             if [ "${#matches[@]}" -ne 1 ]; then
               echo "Expected exactly one ${package} APK; found ${#matches[@]}"
               find bin -type f -name 'kmod-*amneziawg*.apk' -o -name 'kmod-udptunnel*.apk' -o -name 'kmod-crypto-lib-*.apk' -o -name 'kmod-crypto-kpp*.apk'
