@@ -443,7 +443,7 @@ jobs:
             package_name="$(basename "$package" .apk)"
             extract_dir="$MODULE_AUDIT_DIR/$package_name"
             mkdir -p "$extract_dir"
-            "$APK_TOOL" extract --no-chown --destination "$extract_dir" "$package"
+            "$APK_TOOL" extract --allow-untrusted --no-chown --destination "$extract_dir" "$package"
 
             mapfile -t packaged_modules < <(find "$extract_dir" -type f -name '*.ko' -print | LC_ALL=C sort)
             if [ "${#packaged_modules[@]}" -eq 0 ]; then
