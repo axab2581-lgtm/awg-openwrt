@@ -412,12 +412,7 @@ jobs:
             kmod-crypto-lib-poly1305
           )
           for package in "${REQUIRED_KMODS[@]}"; do
-            # Match the main ucode package only, not its ucode-mod-* subpackages.
-            if [ "$package" = "ucode" ]; then
-              mapfile -t matches < <(find bin -type f -name 'ucode-[0-9]*.apk' -print)
-            else
-              mapfile -t matches < <(find bin -type f -name "${package}-*.apk" -print)
-            fi
+            mapfile -t matches < <(find bin -type f -name "${package}-*.apk" -print)
             if [ "${#matches[@]}" -ne 1 ]; then
               echo "Expected exactly one ${package} APK; found ${#matches[@]}"
               find bin -type f -name 'kmod-*amneziawg*.apk' -o -name 'kmod-udptunnel*.apk' -o -name 'kmod-crypto-lib-*.apk' -o -name 'kmod-crypto-kpp*.apk'
@@ -511,7 +506,12 @@ jobs:
             libjson-c5
           )
           for package in "${REQUIRED_USERSPACE_PACKAGES[@]}"; do
-            mapfile -t matches < <(find bin -type f -name "${package}-*.apk" -print)
+            # Select only the main ucode APK, excluding ucode-mod-* subpackages.
+            if [ "$package" = "ucode" ]; then
+              mapfile -t matches < <(find bin -type f -name 'ucode-[0-9]*.apk' -print)
+            else
+              mapfile -t matches < <(find bin -type f -name "${package}-*.apk" -print)
+            fi
             if [ "${#matches[@]}" -ne 1 ]; then
               echo "Expected exactly one ${package} APK; found ${#matches[@]}"
               find bin -type f -name "${package}*.apk" -print
