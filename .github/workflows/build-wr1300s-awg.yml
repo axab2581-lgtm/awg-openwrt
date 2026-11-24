@@ -447,8 +447,10 @@ jobs:
 
             mapfile -t packaged_modules < <(find "$extract_dir" -type f -name '*.ko' -print | LC_ALL=C sort)
             if [ "${#packaged_modules[@]}" -eq 0 ]; then
-              echo "Kernel package contains no .ko files: $package_name"
-              exit 1
+              # Some kernel APKs are dependency/meta packages and legitimately
+              # contain no module files (e.g. kmod-crypto-kpp on this target).
+              echo "NOTICE: no .ko files in module-free package: $package_name; continuing"
+              continue
             fi
 
             for module_path in "${packaged_modules[@]}"; do
